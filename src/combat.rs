@@ -32,6 +32,7 @@ const ATTACK_DURATION: f32 = 0.4;
 const ATTACK_RANGE: f32 = 60.0;
 const ATTACK_DAMAGE: f32 = 34.0;
 const ENEMY_ATTACK_DAMAGE: f32 = 15.0;
+const MELEE_RANGE: f32 = 50.0;
 const KNOCKBACK_STRENGTH: f32 = 300.0;
 const KNOCKBACK_UP: f32 = 150.0;
 
@@ -100,16 +101,15 @@ fn player_hit_detection(
     };
 
     for (enemy_entity, enemy_tf, mut health) in &mut enemy_query {
-        let dx = enemy_tf.translation.x - player_tf.translation.x;
-        let distance = dx.abs();
+        let delta = enemy_tf.translation.xy() - player_tf.translation.xy();
 
-        if distance > ATTACK_RANGE {
+        if delta.length() > ATTACK_RANGE {
             continue;
         }
 
         let in_front = match facing {
-            Facing::Right => dx > 0.0,
-            Facing::Left => dx < 0.0,
+            Facing::Right => delta.x > 0.0,
+            Facing::Left => delta.x < 0.0,
         };
 
         if !in_front {
@@ -159,7 +159,12 @@ fn enemy_hit_player(
             continue;
         }
 
-        let direction_x = (player_tf.translation.x - enemy_tf.translation.x).signum();
+        let delta = player_tf.translation.xy() - enemy_tf.translation.xy();
+        if delta.length() > MELEE_RANGE {
+            continue;
+        }
+
+        let direction_x = delta.x.signum();
         player_health.current -= ENEMY_ATTACK_DAMAGE;
         shakes.add_trauma(0.3);
 

@@ -68,7 +68,10 @@ fn main() {
 
     // Debug inspector (dev builds only)
     #[cfg(feature = "dev")]
-    app.add_plugins(WorldInspectorPlugin::new());
+    {
+        app.add_plugins(bevy_inspector_egui::bevy_egui::EguiPlugin::default());
+        app.add_plugins(WorldInspectorPlugin::new());
+    }
 
     // Spawn camera
     app.add_systems(Startup, spawn_camera);

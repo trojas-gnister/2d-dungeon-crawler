@@ -55,7 +55,7 @@ pub fn enemy_ai_decision(
             continue;
         }
 
-        let distance = (player_tf.translation.x - tf.translation.x).abs();
+        let distance = player_tf.translation.xy().distance(tf.translation.xy());
 
         cooldown.tick(time.delta());
 
