@@ -8,8 +8,9 @@ use crate::health::{DeathDespawnTimer, Health};
 use crate::player::Player;
 
 use super::{
-    Enemy, EnemyAttackCooldown, EnemyAttackTimer, EnemyState, IdleTimer, PatrolBounds,
-    PatrolDirection,
+    Enemy, EnemyAttackCooldown, EnemyAttackTimer, EnemySpeedMultiplier, EnemyState, FlyingState,
+    HoverAltitude, IdleTimer, PatrolBounds, PatrolDirection, SwoopCooldown, SwoopTarget,
+    SwoopTimer,
 };
 
 const PATROL_SPEED: f32 = 60.0;
@@ -19,7 +20,19 @@ const CHASE_DROP_OFF: f32 = 350.0;
 const MELEE_RANGE: f32 = 40.0;
 const ATTACK_DURATION: f32 = 0.5;
 
-/// Decides state transitions based on distance to player, timers, and health.
+// Flying AI constants
+const HOVER_BOB_AMPLITUDE: f32 = 15.0;
+const HOVER_BOB_SPEED: f32 = 2.0;
+const HOVER_DRIFT_SPEED: f32 = 30.0;
+const SWOOP_SPEED: f32 = 250.0;
+const RETREAT_SPEED: f32 = 150.0;
+const SWOOP_DETECTION_RANGE: f32 = 300.0;
+
+// ---------------------------------------------------------------------------
+// Ground enemy AI (unchanged logic, added Without<FlyingState> filter)
+// ---------------------------------------------------------------------------
+
+/// Decides state transitions for ground enemies.
 pub fn enemy_ai_decision(
     time: Res<Time>,
     player_query: Query<&Transform, With<Player>>,
@@ -33,7 +46,7 @@ pub fn enemy_ai_decision(
             &mut EnemyAttackCooldown,
             Option<&mut EnemyAttackTimer>,
         ),
-        With<Enemy>,
+        (With<Enemy>, Without<FlyingState>),
     >,
     mut commands: Commands,
     mut shakes: Shakes,
@@ -42,15 +55,17 @@ pub fn enemy_ai_decision(
         return;
     };
 
-    for (entity, tf, mut state, mut idle_timer, health, mut cooldown, attack_timer) in &mut enemy_query {
+    for (entity, tf, mut state, mut idle_timer, health, mut cooldown, attack_timer) in
+        &mut enemy_query
+    {
         // Dead enemies stay dead
         if health.is_dead() {
             if *state != EnemyState::Dead {
                 *state = EnemyState::Dead;
                 shakes.add_trauma(0.5);
-                commands.entity(entity).insert(
-                    DeathDespawnTimer(Timer::from_seconds(2.0, TimerMode::Once)),
-                );
+                commands
+                    .entity(entity)
+                    .insert(DeathDespawnTimer(Timer::from_seconds(2.0, TimerMode::Once)));
             }
             continue;
         }
@@ -100,7 +115,7 @@ pub fn enemy_ai_decision(
 
     // Second pass: insert attack timers for enemies that just entered Attacking state
     for (entity, state) in enemy_query
-        .transmute_lens_filtered::<(Entity, &EnemyState), With<Enemy>>()
+        .transmute_lens_filtered::<(Entity, &EnemyState), (With<Enemy>, Without<FlyingState>)>()
         .query()
         .iter()
     {
@@ -122,7 +137,7 @@ pub fn enemy_ai_decision(
     }
 }
 
-/// Moves enemies based on their current state.
+/// Moves ground enemies based on their current state, scaled by speed multiplier.
 pub fn enemy_movement(
     anims: Res<CharacterAnims>,
     player_query: Query<&Transform, With<Player>>,
@@ -130,22 +145,24 @@ pub fn enemy_movement(
         (
             &Transform,
             &EnemyState,
+            &EnemySpeedMultiplier,
             &mut LinearVelocity,
             &PatrolBounds,
             &mut PatrolDirection,
             &mut Sprite,
             &mut SpritesheetAnimation,
         ),
-        With<Enemy>,
+        (With<Enemy>, Without<FlyingState>),
     >,
 ) {
     let Ok(player_tf) = player_query.single() else {
         return;
     };
 
-    for (tf, state, mut velocity, bounds, mut patrol_dir, mut sprite, mut anim) in
+    for (tf, state, speed_mult, mut velocity, bounds, mut patrol_dir, mut sprite, mut anim) in
         &mut enemy_query
     {
+        let mult = speed_mult.0;
         match state {
             EnemyState::Idle | EnemyState::Dead => {
                 velocity.x = 0.0;
@@ -157,19 +174,130 @@ pub fn enemy_movement(
                 } else if tf.translation.x >= bounds.right {
                     patrol_dir.0 = -1.0;
                 }
-                velocity.x = patrol_dir.0 * PATROL_SPEED;
+                velocity.x = patrol_dir.0 * PATROL_SPEED * mult;
                 sprite.flip_x = patrol_dir.0 < 0.0;
                 switch_anim(&mut anim, &anims.walk);
             }
             EnemyState::Chase => {
                 let dir = (player_tf.translation.x - tf.translation.x).signum();
-                velocity.x = dir * CHASE_SPEED;
+                velocity.x = dir * CHASE_SPEED * mult;
                 sprite.flip_x = dir < 0.0;
                 switch_anim(&mut anim, &anims.walk);
             }
             EnemyState::Attacking => {
                 velocity.x = 0.0;
                 switch_anim(&mut anim, &anims.idle);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Flying enemy AI
+// ---------------------------------------------------------------------------
+
+/// Hover/swoop/retreat state machine for flying enemies.
+pub fn flying_ai(
+    time: Res<Time>,
+    player_query: Query<&Transform, With<Player>>,
+    mut flyer_query: Query<
+        (
+            Entity,
+            &mut Transform,
+            &mut FlyingState,
+            &HoverAltitude,
+            &Health,
+            &EnemySpeedMultiplier,
+            &mut SwoopCooldown,
+            &mut SwoopTimer,
+            &mut Sprite,
+            Option<&SwoopTarget>,
+        ),
+        (With<Enemy>, Without<Player>),
+    >,
+    mut commands: Commands,
+) {
+    let Ok(player_tf) = player_query.single() else {
+        return;
+    };
+    let player_pos = player_tf.translation.xy();
+    let elapsed_secs = time.elapsed_secs();
+    let dt = time.delta_secs();
+
+    for (entity, mut tf, mut state, hover_alt, health, speed_mult, mut cooldown, mut swoop_timer, mut sprite, swoop_target) in
+        &mut flyer_query
+    {
+        let mult = speed_mult.0;
+        // Dead flyers: trigger death despawn
+        if health.is_dead() {
+            if *state != FlyingState::Hover {
+                // Just reset to avoid continued movement
+                *state = FlyingState::Hover;
+            }
+            // Death is handled by the shared death_despawn_tick system via Health check
+            // Insert despawn timer if not already present
+            commands
+                .entity(entity)
+                .entry::<DeathDespawnTimer>()
+                .or_insert(DeathDespawnTimer(Timer::from_seconds(2.0, TimerMode::Once)));
+            continue;
+        }
+
+        let distance = player_pos.distance(tf.translation.xy());
+
+        match *state {
+            FlyingState::Hover => {
+                // Sinusoidal bob at hover altitude
+                let bob = (elapsed_secs * HOVER_BOB_SPEED).sin() * HOVER_BOB_AMPLITUDE;
+                tf.translation.y = hover_alt.0 + bob;
+
+                // Drift toward player X slowly
+                let dx = player_pos.x - tf.translation.x;
+                tf.translation.x += dx.signum() * HOVER_DRIFT_SPEED * mult * dt
+                    * (dx.abs().min(1.0));
+                sprite.flip_x = dx < 0.0;
+
+                // Check if we should swoop
+                cooldown.tick(time.delta());
+                if cooldown.is_finished() && distance < SWOOP_DETECTION_RANGE {
+                    *state = FlyingState::Swoop;
+                    swoop_timer.reset();
+                    // Capture player position for the dive
+                    commands.entity(entity).insert(SwoopTarget(player_pos));
+                }
+            }
+            FlyingState::Swoop => {
+                swoop_timer.tick(time.delta());
+
+                if let Some(target) = swoop_target {
+                    let dir = (target.0 - tf.translation.xy()).normalize_or_zero();
+                    tf.translation.x += dir.x * SWOOP_SPEED * mult * dt;
+                    tf.translation.y += dir.y * SWOOP_SPEED * mult * dt;
+                    sprite.flip_x = dir.x < 0.0;
+
+                    // Reached target or timer expired → retreat
+                    let dist_to_target = target.0.distance(tf.translation.xy());
+                    if dist_to_target < 20.0 || swoop_timer.is_finished() {
+                        *state = FlyingState::Retreat;
+                        commands.entity(entity).remove::<SwoopTarget>();
+                    }
+                } else {
+                    // No target somehow — retreat
+                    *state = FlyingState::Retreat;
+                }
+            }
+            FlyingState::Retreat => {
+                // Fly back up to hover altitude
+                let target_y = hover_alt.0;
+                let dy = target_y - tf.translation.y;
+
+                if dy.abs() < 5.0 {
+                    tf.translation.y = target_y;
+                    *state = FlyingState::Hover;
+                    cooldown.reset();
+                } else {
+                    tf.translation.y += dy.signum() * RETREAT_SPEED * mult * dt;
+                }
             }
         }
     }

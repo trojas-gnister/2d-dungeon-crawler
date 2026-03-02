@@ -4,13 +4,16 @@ use bevy_tnua::prelude::*;
 use bevy_trauma_shake::prelude::*;
 use leafwing_input_manager::prelude::*;
 
-use crate::enemy::{Enemy, EnemyAttackTimer, EnemyState};
+use crate::enemy::{Enemy, EnemyAttackTimer, EnemyKind, EnemyState, FlyingState};
 use crate::health::Health;
 use crate::input::PlayerAction;
 use crate::player::{
     Facing, Player, PlayerControlScheme, PlayerControlSchemeActionDiscriminant,
 };
 use crate::screens::Screen;
+
+const FLYER_CONTACT_RANGE: f32 = 30.0;
+const FLYER_CONTACT_DAMAGE: f32 = 10.0;
 
 pub fn plugin(app: &mut App) {
     app.add_systems(
@@ -20,6 +23,7 @@ pub fn plugin(app: &mut App) {
             player_attack_tick,
             player_hit_detection,
             enemy_hit_player,
+            flying_enemy_contact_damage,
             attack_visual_feedback,
             hit_flash_decay,
         )
@@ -180,6 +184,59 @@ fn enemy_hit_player(
     }
 }
 
+/// During swoop, flying enemies deal contact damage if close to player.
+fn flying_enemy_contact_damage(
+    flyer_query: Query<(&Transform, &FlyingState), With<Enemy>>,
+    mut player_query: Query<
+        (Entity, &Transform, &mut Health, &mut TnuaController<PlayerControlScheme>),
+        With<Player>,
+    >,
+    mut commands: Commands,
+    mut shakes: Shakes,
+) {
+    let Ok((player_entity, player_tf, mut player_health, mut controller)) =
+        player_query.single_mut()
+    else {
+        return;
+    };
+
+    if player_health.is_dead() {
+        return;
+    }
+
+    // Don't stack knockbacks
+    if controller.action_discriminant()
+        == Some(PlayerControlSchemeActionDiscriminant::Knockback)
+    {
+        return;
+    }
+
+    for (enemy_tf, fly_state) in &flyer_query {
+        if *fly_state != FlyingState::Swoop {
+            continue;
+        }
+
+        let delta = player_tf.translation.xy() - enemy_tf.translation.xy();
+        if delta.length() > FLYER_CONTACT_RANGE {
+            continue;
+        }
+
+        let direction_x = delta.x.signum();
+        player_health.current -= FLYER_CONTACT_DAMAGE;
+        shakes.add_trauma(0.2);
+
+        controller.action_interrupt(PlayerControlScheme::Knockback(TnuaBuiltinKnockback {
+            shove: Vec3::new(direction_x * KNOCKBACK_STRENGTH, KNOCKBACK_UP, 0.0),
+            ..default()
+        }));
+
+        commands
+            .entity(player_entity)
+            .insert(HitFlash(Timer::from_seconds(0.2, TimerMode::Once)));
+        break;
+    }
+}
+
 /// Tint the player yellow-white while attacking, red when hit.
 fn attack_visual_feedback(
     mut player_query: Query<
@@ -200,16 +257,19 @@ fn attack_visual_feedback(
     }
 }
 
-/// Flash hit enemies red, then fade back to normal.
+/// Flash hit enemies red, then fade back to normal (purple for flyers, white for ground).
 fn hit_flash_decay(
     time: Res<Time>,
-    mut query: Query<(Entity, &mut Sprite, &mut HitFlash), With<Enemy>>,
+    mut query: Query<(Entity, &mut Sprite, &mut HitFlash, Option<&EnemyKind>), With<Enemy>>,
     mut commands: Commands,
 ) {
-    for (entity, mut sprite, mut flash) in &mut query {
+    for (entity, mut sprite, mut flash, kind) in &mut query {
         flash.tick(time.delta());
         if flash.is_finished() {
-            sprite.color = Color::WHITE;
+            sprite.color = match kind {
+                Some(EnemyKind::Flying) => Color::srgb(0.7, 0.4, 1.0),
+                _ => Color::WHITE,
+            };
             commands.entity(entity).remove::<HitFlash>();
         } else {
             sprite.color = Color::srgb(1.0, 0.3, 0.3);

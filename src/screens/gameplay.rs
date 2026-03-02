@@ -1,20 +1,29 @@
 use bevy::prelude::*;
 
 use crate::health::Health;
+use crate::level::PlayerProgress;
 use crate::player::Player;
 
 use super::Screen;
 
 pub fn plugin(app: &mut App) {
     app.add_systems(OnEnter(Screen::Gameplay), spawn_hud);
-    app.add_systems(Update, update_health_bar.run_if(in_state(Screen::Gameplay)));
+    app.add_systems(
+        Update,
+        (update_health_bar, update_height_display).run_if(in_state(Screen::Gameplay)),
+    );
 }
 
 /// Marker for the health bar fill (the red inner bar that shrinks).
 #[derive(Component)]
 struct HealthBarFill;
 
+/// Marker for the height display text.
+#[derive(Component)]
+struct HeightDisplay;
+
 fn spawn_hud(mut commands: Commands) {
+    // Health bar (top-left)
     commands
         .spawn((
             DespawnOnExit(Screen::Gameplay),
@@ -59,6 +68,24 @@ fn spawn_hud(mut commands: Commands) {
                     BackgroundColor(Color::srgb(0.8, 0.15, 0.15)),
                 ));
         });
+
+    // Height display (top-right)
+    commands.spawn((
+        HeightDisplay,
+        DespawnOnExit(Screen::Gameplay),
+        Text::new("0m"),
+        TextFont {
+            font_size: 24.0,
+            ..default()
+        },
+        TextColor(Color::WHITE),
+        Node {
+            position_type: PositionType::Absolute,
+            right: Val::Px(20.0),
+            top: Val::Px(20.0),
+            ..default()
+        },
+    ));
 }
 
 /// Update health bar width based on player health.
@@ -74,4 +101,16 @@ fn update_health_bar(
     };
 
     bar_node.width = Val::Percent(health.fraction() * 100.0);
+}
+
+/// Update height counter in the top-right HUD.
+fn update_height_display(
+    progress: Res<PlayerProgress>,
+    mut query: Query<&mut Text, With<HeightDisplay>>,
+) {
+    let Ok(mut text) = query.single_mut() else {
+        return;
+    };
+    let meters = (progress.highest_y / 100.0).max(0.0) as i32;
+    **text = format!("{meters}m");
 }

@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use bevy_spritesheet_animation::prelude::*;
+use bevy_tnua::control_helpers::TnuaActionsCounter;
 use bevy_tnua::prelude::*;
 use leafwing_input_manager::prelude::*;
 
@@ -7,7 +8,10 @@ use crate::animation::CharacterAnims;
 use crate::combat::Attacking;
 use crate::input::PlayerAction;
 
-use super::{Facing, Player, PlayerControlScheme, PlayerControlSchemeActionDiscriminant};
+use super::{
+    Facing, Player, PlayerAirActions, PlayerControlScheme,
+    PlayerControlSchemeActionDiscriminant,
+};
 
 const MOVE_SPEED: f32 = 200.0;
 const SPRINT_MULTIPLIER: f32 = 1.8;
@@ -18,6 +22,7 @@ pub fn player_movement(
         (
             &ActionState<PlayerAction>,
             &mut TnuaController<PlayerControlScheme>,
+            &TnuaActionsCounter<PlayerAirActions>,
             &mut Facing,
             &mut Sprite,
             &mut SpritesheetAnimation,
@@ -26,7 +31,7 @@ pub fn player_movement(
         With<Player>,
     >,
 ) {
-    let Ok((action, mut controller, mut facing, mut sprite, mut anim, attacking)) =
+    let Ok((action, mut controller, air_actions, mut facing, mut sprite, mut anim, attacking)) =
         query.single_mut()
     else {
         return;
@@ -55,10 +60,14 @@ pub fn player_movement(
 
     controller.initiate_action_feeding();
 
-    // Feed jump while button held (variable-height via shorten_extra_gravity on release)
+    // Feed jump while button held. Tnua's TnuaActionsCounter handles
+    // air jump counting — count_for() returns 0 on ground, 1 for the
+    // first air jump, etc. allow_in_air <= 1 means double jump.
     if !is_knockback && action.pressed(&PlayerAction::Jump) {
         controller.action(PlayerControlScheme::Jump(TnuaBuiltinJump {
-            allow_in_air: true,
+            allow_in_air: air_actions
+                .count_for(PlayerControlSchemeActionDiscriminant::Jump)
+                <= 1,
             ..default()
         }));
     }
@@ -83,7 +92,7 @@ pub fn player_movement(
     }
 }
 
-/// Camera smoothly follows the player position.
+/// Camera smoothly follows the player position with a vertical bias for climbing.
 pub fn camera_follow(
     player: Query<&Transform, With<Player>>,
     mut camera: Query<&mut Transform, (With<Camera2d>, Without<Player>)>,
@@ -95,10 +104,16 @@ pub fn camera_follow(
         return;
     };
 
+    // Offset camera upward so the player sees more of what's above
     let target = Vec3::new(
         player_tf.translation.x,
-        player_tf.translation.y + 50.0,
+        player_tf.translation.y + 100.0,
         cam_tf.translation.z,
     );
-    cam_tf.translation = cam_tf.translation.lerp(target, 0.1);
+
+    // Faster vertical lerp (0.12) vs horizontal (0.08) so camera keeps up while climbing
+    let new_x = cam_tf.translation.x + (target.x - cam_tf.translation.x) * 0.08;
+    let new_y = cam_tf.translation.y + (target.y - cam_tf.translation.y) * 0.12;
+    cam_tf.translation.x = new_x;
+    cam_tf.translation.y = new_y;
 }

@@ -7,6 +7,7 @@ use bevy_tnua::builtins::{
     TnuaBuiltinJumpConfig, TnuaBuiltinKnockback, TnuaBuiltinKnockbackConfig,
     TnuaBuiltinWalkConfig,
 };
+use bevy_tnua::control_helpers::{TnuaActionSlots, TnuaAirActionsPlugin};
 use bevy_tnua::prelude::*;
 use bevy_tnua_avian2d::prelude::*;
 
@@ -23,6 +24,14 @@ pub enum PlayerControlScheme {
     Knockback(TnuaBuiltinKnockback),
 }
 
+/// Defines air action counting slots for double jump.
+#[derive(TnuaActionSlots)]
+#[slots(scheme = PlayerControlScheme)]
+pub struct PlayerAirActions {
+    #[slots(Jump)]
+    jump: usize,
+}
+
 pub fn plugin(app: &mut App) {
     app.add_systems(OnEnter(Screen::Gameplay), spawn_player);
     app.add_systems(
@@ -33,6 +42,8 @@ pub fn plugin(app: &mut App) {
         Update,
         movement::camera_follow.run_if(in_state(Screen::Gameplay)),
     );
+    // Air action counting for double jump
+    app.add_plugins(TnuaAirActionsPlugin::<PlayerAirActions>::new(FixedUpdate));
 }
 
 /// Marker component identifying the player entity.
@@ -59,19 +70,26 @@ fn spawn_player(
 
     let config = configs.add(PlayerControlSchemeConfig {
         basis: TnuaBuiltinWalkConfig {
-            speed: 200.0,
+            speed: 150.0,
             float_height: 17.0,
-            acceleration: 2000.0,
-            air_acceleration: 800.0,
-            coyote_time: 0.12,
+            acceleration: 900.0,
+            air_acceleration: 400.0,
+            coyote_time: 0.10,
             free_fall_extra_gravity: 800.0,
+            spring_strength: 600.0,
+            spring_dampening: 1.8,
+            cling_distance: 4.0,
             ..default()
         },
         jump: TnuaBuiltinJumpConfig {
-            height: 120.0,
+            height: 140.0,
             input_buffer_time: 0.15,
-            fall_extra_gravity: 400.0,
-            shorten_extra_gravity: 1200.0,
+            takeoff_extra_gravity: 400.0,
+            takeoff_above_velocity: 150.0,
+            fall_extra_gravity: 600.0,
+            shorten_extra_gravity: 1400.0,
+            peak_prevention_at_upward_velocity: 80.0,
+            peak_prevention_extra_gravity: 400.0,
             ..default()
         },
         knockback: TnuaBuiltinKnockbackConfig {

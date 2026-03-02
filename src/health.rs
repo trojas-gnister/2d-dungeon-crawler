@@ -1,13 +1,15 @@
 use bevy::prelude::*;
 
 use crate::enemy::{Enemy, EnemyState};
+use crate::level::{ChunkTracker, CHUNK_HEIGHT};
 use crate::player::Player;
 use crate::screens::Screen;
 
 pub fn plugin(app: &mut App) {
     app.add_systems(
         Update,
-        (death_despawn_tick, player_death_check)
+        (death_despawn_tick, void_death_check, player_death_check)
+            .chain()
             .run_if(in_state(Screen::Gameplay)),
     );
 }
@@ -58,6 +60,33 @@ fn death_despawn_tick(
         if timer.is_finished() {
             commands.entity(entity).despawn();
         }
+    }
+}
+
+/// Kill the player if they fall far below the lowest active chunk.
+fn void_death_check(
+    tracker: Res<ChunkTracker>,
+    mut player_query: Query<(&Transform, &mut Health), With<Player>>,
+) {
+    let Ok((tf, mut health)) = player_query.single_mut() else {
+        return;
+    };
+
+    if health.is_dead() {
+        return;
+    }
+
+    // Find the lowest generated chunk
+    let lowest_chunk = tracker
+        .generated
+        .iter()
+        .copied()
+        .min()
+        .unwrap_or(0);
+    let void_y = lowest_chunk as f32 * CHUNK_HEIGHT - 1000.0;
+
+    if tf.translation.y < void_y {
+        health.current = 0.0;
     }
 }
 

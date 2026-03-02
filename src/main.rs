@@ -38,7 +38,7 @@ fn main() {
     // Physics — default gravity is ~9.81 px/s² which is far too weak for pixel-scale 2D.
     // 980 px/s² gives snappy, game-feel-good jumps.
     app.add_plugins(PhysicsPlugins::default());
-    app.insert_resource(Gravity(Vec2::new(0.0, -980.0)));
+    app.insert_resource(Gravity(Vec2::new(0.0, -1400.0)));
 
     // Our plugins
     app.add_plugins((
