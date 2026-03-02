@@ -1,0 +1,31 @@
+[package]
+name = "bevy_2d_combat"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = { version = "0.18", default-features = false, features = [
+    "default_app",
+    "default_platform",
+    "2d_api",
+    "2d_bevy_render",
+    "ui_api",
+    "ui_bevy_render",
+    "serialize",
+] }
+avian2d = "0.5"
+rand = "0.9"
+bevy-tnua = "0.30"
+bevy-tnua-avian2d = "0.10"
+leafwing-input-manager = "0.20"
+bevy_spritesheet_animation = "6.0"
+bevy_trauma_shake = "0.7"
+bevy-inspector-egui = { version = "0.36", optional = true }
+
+[features]
+default = ["dev"]
+dev = ["bevy/dev", "bevy/dynamic_linking", "dep:bevy-inspector-egui"]
+
+[lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
