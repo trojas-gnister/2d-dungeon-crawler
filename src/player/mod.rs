@@ -70,10 +70,10 @@ fn spawn_player(
 
     let config = configs.add(PlayerControlSchemeConfig {
         basis: TnuaBuiltinWalkConfig {
-            speed: 150.0,
+            speed: 110.0,
             float_height: 17.0,
-            acceleration: 900.0,
-            air_acceleration: 400.0,
+            acceleration: 500.0,
+            air_acceleration: 250.0,
             coyote_time: 0.10,
             free_fall_extra_gravity: 800.0,
             spring_strength: 600.0,

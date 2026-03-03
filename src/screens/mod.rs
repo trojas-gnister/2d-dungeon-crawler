@@ -1,3 +1,4 @@
+pub mod gameover;
 pub mod gameplay;
 pub mod title;
 
@@ -5,7 +6,7 @@ use bevy::prelude::*;
 
 pub fn plugin(app: &mut App) {
     app.init_state::<Screen>();
-    app.add_plugins((title::plugin, gameplay::plugin));
+    app.add_plugins((title::plugin, gameplay::plugin, gameover::plugin));
 }
 
 /// Top-level game state.
@@ -14,4 +15,5 @@ pub enum Screen {
     #[default]
     Title,
     Gameplay,
+    GameOver,
 }

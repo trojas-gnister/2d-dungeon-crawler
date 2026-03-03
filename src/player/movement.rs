@@ -13,8 +13,8 @@ use super::{
     PlayerControlSchemeActionDiscriminant,
 };
 
-const MOVE_SPEED: f32 = 200.0;
-const SPRINT_MULTIPLIER: f32 = 1.8;
+const MOVE_SPEED: f32 = 110.0;
+const SPRINT_MULTIPLIER: f32 = 1.6;
 
 pub fn player_movement(
     anims: Res<CharacterAnims>,

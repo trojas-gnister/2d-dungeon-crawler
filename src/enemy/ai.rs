@@ -4,6 +4,7 @@ use bevy_spritesheet_animation::prelude::*;
 use bevy_trauma_shake::prelude::*;
 
 use crate::animation::CharacterAnims;
+use crate::combat::{FlyingKnockbackVelocity, Staggered};
 use crate::health::{DeathDespawnTimer, Health};
 use crate::player::Player;
 
@@ -151,6 +152,7 @@ pub fn enemy_movement(
             &mut PatrolDirection,
             &mut Sprite,
             &mut SpritesheetAnimation,
+            Option<&Staggered>,
         ),
         (With<Enemy>, Without<FlyingState>),
     >,
@@ -159,9 +161,13 @@ pub fn enemy_movement(
         return;
     };
 
-    for (tf, state, speed_mult, mut velocity, bounds, mut patrol_dir, mut sprite, mut anim) in
+    for (tf, state, speed_mult, mut velocity, bounds, mut patrol_dir, mut sprite, mut anim, staggered) in
         &mut enemy_query
     {
+        // Skip velocity writes while staggered so physics knockback plays out
+        if staggered.is_some() {
+            continue;
+        }
         let mult = speed_mult.0;
         match state {
             EnemyState::Idle | EnemyState::Dead => {
@@ -212,6 +218,7 @@ pub fn flying_ai(
             &mut SwoopTimer,
             &mut Sprite,
             Option<&SwoopTarget>,
+            Option<&FlyingKnockbackVelocity>,
         ),
         (With<Enemy>, Without<Player>),
     >,
@@ -224,9 +231,15 @@ pub fn flying_ai(
     let elapsed_secs = time.elapsed_secs();
     let dt = time.delta_secs();
 
-    for (entity, mut tf, mut state, hover_alt, health, speed_mult, mut cooldown, mut swoop_timer, mut sprite, swoop_target) in
+    for (entity, mut tf, mut state, hover_alt, health, speed_mult, mut cooldown, mut swoop_timer, mut sprite, swoop_target, kb_vel) in
         &mut flyer_query
     {
+        // While staggered from knockback, apply knockback velocity instead of normal AI
+        if let Some(kb) = kb_vel {
+            tf.translation.x += kb.0.x * dt;
+            tf.translation.y += kb.0.y * dt;
+            continue;
+        }
         let mult = speed_mult.0;
         // Dead flyers: trigger death despawn
         if health.is_dead() {
